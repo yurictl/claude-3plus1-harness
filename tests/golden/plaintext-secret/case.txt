@@ -1,0 +1,6 @@
+# Golden case: plaintext secret in committed config (BLOCKER "No plaintext secrets").
+[database]
+host = db.internal
+port = 5432
+user = app
+password = "hunter2"

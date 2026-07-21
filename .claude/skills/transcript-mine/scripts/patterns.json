@@ -1,0 +1,63 @@
+{
+  "additive_correction": {
+    "description": "User asks for something the model should have included on the first pass. Strong signal of a missing default behavior.",
+    "regexes": [
+      "\\b(can you |could you )?also\\b",
+      "and also\\b",
+      "^and\\b.*\\b(too|as well)\\b",
+      "don't forget"
+    ]
+  },
+  "verification_request": {
+    "description": "User asks if the model checked something it should have checked unprompted. Suggests a missing verification step.",
+    "regexes": [
+      "did you (check|test|run|verify|read|look)",
+      "have you (checked|tested|verified|read|looked)",
+      "you (didn't|didnt) (check|test|read|look|verify)",
+      "did you (actually|really)"
+    ]
+  },
+  "still_wrong": {
+    "description": "User signals the result is still incorrect after one or more attempts. Suggests a fragile/recurring failure mode.",
+    "regexes": [
+      "still (wrong|broken|not (right|working|correct))",
+      "^no[,.\\s].*(wrong|that's not|not (right|what))",
+      "not what (i|I) (asked|wanted)",
+      "as i said"
+    ]
+  },
+  "stop_doing": {
+    "description": "User tells the model to stop a behavior. Strong direct prohibition signal.",
+    "regexes": [
+      "stop (doing|adding|making|using|writing|trying)",
+      "don't (do|add|make|use|write) (that|this)",
+      "quit (doing|adding)",
+      "no more"
+    ]
+  },
+  "actually_correction": {
+    "description": "User corrects a model assumption. Often indicates the model leaped to a conclusion that should have been verified.",
+    "regexes": [
+      "^actually[,.\\s]",
+      "^actually,?\\s",
+      "you (assumed|guessed) wrong"
+    ]
+  },
+  "wrong_target": {
+    "description": "User points out the model edited/read/operated on the wrong file or scope. Suggests bad target selection heuristics.",
+    "regexes": [
+      "wrong (file|folder|directory|repo|project|function|test|module)",
+      "that's the wrong",
+      "i (didn't|didnt) (mean|ask for) (this|that)"
+    ]
+  },
+  "explicit_instruction": {
+    "description": "User explicitly states a rule, often after the model violated it. These are the highest-yield rule candidates.",
+    "regexes": [
+      "(always|never) (do|use|write|put|add|include|skip)",
+      "the rule is",
+      "from now on",
+      "going forward"
+    ]
+  }
+}

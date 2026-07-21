@@ -1,0 +1,5 @@
+# Grade marker is session state, never committed.
+.claude/grade-ok
+
+# Telemetry stores are runtime data, never committed.
+.claude/telemetry/

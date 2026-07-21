@@ -1,0 +1,6 @@
+# Golden case: justified exception — TODO without a tracker reference, but with
+# an inline reason. Must be reported as [CAVEAT] (routed to a human), not
+# silently accepted and not flagged as a plain [WARNING].
+[pool]
+max_connections = 50
+# TODO: raise once the load test passes  # reason: vendor driver leaks above 50, fix promised Q3
