@@ -1,0 +1,5 @@
+# Clean case: a TODO that names its issue — the rule is satisfied, so there is
+# nothing to report. Pins that "has a tracker ref" is actually recognised.
+[cache]
+# TODO(PROJ-142): drop the legacy key format after the 2026-09 migration
+ttl_seconds = 900

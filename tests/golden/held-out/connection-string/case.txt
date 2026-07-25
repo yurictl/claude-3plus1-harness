@@ -1,0 +1,6 @@
+# Held-out case: the "No plaintext secrets" rule, in a surface no held-in fixture
+# uses — credentials embedded in a connection string rather than a password field.
+# Never consulted while writing a rule; exists only to accept rubric changes.
+[queue]
+broker_url = amqp://svc_orders:Rr8-prod-2026@rabbit.internal:5672/orders
+prefetch = 32

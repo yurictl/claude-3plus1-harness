@@ -1,5 +1,10 @@
-# Grade marker is session state, never committed.
+# Grade anchors are session state, never committed.
 .claude/grade-ok
+.claude/last-grade.json
 
 # Telemetry stores are runtime data, never committed.
 .claude/telemetry/
+
+# Python bytecode
+__pycache__/
+*.py[cod]

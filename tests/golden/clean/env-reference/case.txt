@@ -1,0 +1,7 @@
+# Clean case: compliant with both rules. Secrets are references, not values.
+# A rubric edit that flags this has traded precision for recall.
+[database]
+host = db.internal
+port = 5432
+user = app
+password = ${DB_PASSWORD}

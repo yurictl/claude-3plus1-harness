@@ -1,0 +1,19 @@
+{
+ "updated": "2026-07-25",
+ "model": "sonnet",
+ "rubric_sha256": "65aed28f5b796117",
+ "sets": {
+  "held-in": {
+   "pass": 2,
+   "total": 2
+  },
+  "held-out": {
+   "pass": 2,
+   "total": 2
+  },
+  "clean": {
+   "pass": 2,
+   "total": 2
+  }
+ }
+}

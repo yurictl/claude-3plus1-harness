@@ -1,0 +1,5 @@
+# Held-out case: the TODO rule with neither a tracker reference nor an inline
+# reason — must be a plain [WARNING], not a [CAVEAT] (nothing justifies it).
+[retry]
+# TODO: make the backoff configurable
+max_attempts = 3

@@ -1,4 +1,14 @@
 {
+  "permissions": {
+    "deny": [
+      "Write(.claude/grade-ok)",
+      "Edit(.claude/grade-ok)",
+      "MultiEdit(.claude/grade-ok)",
+      "Write(.claude/last-grade.json)",
+      "Edit(.claude/last-grade.json)",
+      "MultiEdit(.claude/last-grade.json)"
+    ]
+  },
   "hooks": {
     "UserPromptSubmit": [
       {
@@ -21,6 +31,15 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/hooks/telemetry-log.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/hooks/protect-anchors.sh"
           }
         ]
       },

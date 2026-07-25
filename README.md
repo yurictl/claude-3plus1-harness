@@ -6,7 +6,7 @@ Three layers, one premise:
 
 1. **Substrate — the 3+1 docs.** Most engineering knowledge is never published because writing it up is too expensive. If documentation lives in a shape both humans and agents can read, write, and keep current, that cost collapses.
 2. **Executor — the verification harness.** In a mature 3+1 project the verification knowledge is already written down; what's missing is the executor. Here the conventions doc is a rubric a grader skill runs, a PreToolUse hook enforces, and a golden set calibrates.
-3. **Measurement — local telemetry.** Zero-LLM hooks log the work loop; a SessionEnd harvester preserves session aggregates past transcript rotation; a stdlib script renders the dashboard. The harness does the checking, the telemetry proves it's being used.
+3. **Measurement — local telemetry.** Zero-LLM hooks log the work loop; a SessionEnd harvester preserves session aggregates past transcript rotation; a stdlib script renders the dashboard. Two halves, deliberately: activity metrics show the harness is being *used*, and a harness-health panel — catch-rate trend, escapes past a clean grade, dead-weight rules, loop-closure ratios — shows whether it *works*.
 
 Framework reference: [LinkedIn — "Most engineering knowledge is never published"](https://www.linkedin.com/feed/update/urn:li:share:7431585543827668992). Predecessor repo (skills collection + worked examples this template grew out of): [`claude-skills-3plus1`](https://github.com/yurictl/claude-skills-3plus1).
 
@@ -30,29 +30,36 @@ Framework reference: [LinkedIn — "Most engineering knowledge is never publishe
 ```
 CLAUDE.md                          Orientation template — map, severity model, adapter table (TODO slots)
 docs/
-  operations/conventions.md        the rubric — [BLOCKER]/[WARNING] rules the harness executes
-  decisions/ADR-001-*.md           why docs-as-graders (+ anti-tamper / CAVEAT amendment)
+  operations/conventions.md        the rubric — [BLOCKER]/[WARNING] rules + how its own edits are accepted
+  decisions/ADR-001-*.md           why docs-as-graders (+ anti-tamper, CAVEAT, fail-open amendments)
   wip/harvest-failure-modes.md     open loop: real failures graduate into the rubric
 src/                               placeholder for your product (see scripts/harness.conf)
 .claude/
-  settings.json                    all hook wiring — harness gate + telemetry (the on/off switch)
+  settings.json                    all hook wiring + anchor deny-list (the on/off switch)
   skills/
     review/                        the grader — three bands: [BLOCKER]/[WARNING]/[CAVEAT]
-    checkpoint/                    the write-back step — failures become rules + fixtures
+    checkpoint/                    the write-back step — failures become rules, fixtures, escapes
     grill-me/                      interview -> route resolutions into the 3+1 buckets
     start-work/                    drive the WIP layer (start / resume / proceed / checkpoint)
     graduate/                      promote finished WIP into Operations / Decisions
     transcript-mine/               close the correction loop from past sessions
 scripts/
-  harness.conf                     THE file to edit: protected paths, rubric, calibration paths
-  grade-marker.sh                  trust anchor: fingerprint-based grade marker (hash/stamp/check)
-  hooks/pre-push-grade.sh          the gate: marker integrity + weakened-test + freshness
-  replay.sh                        golden-set replay via headless `claude -p`
+  harness.conf                     THE file to edit: protected paths, rubric, calibration, pinned models
+  grade-marker.sh                  trust anchors: findings record + fingerprint marker (record/stamp/check)
+  hooks/pre-push-grade.sh          the gate: anchor integrity + weakened-test + freshness, fail-closed
+  hooks/protect-anchors.sh         the second door: Write/Edit on either anchor is blocked
+  replay.sh                        three-set replay + tier/ablation probes via headless `claude -p`
+  escape-log.sh                    failures that got past a clean grade, made countable
   hooks/telemetry-log.sh           zero-LLM work-loop event collector
   telemetry_harvest.py             SessionEnd transcript -> durable session aggregate
-  telemetry_report.py              console summary / static HTML dashboard
-tests/golden/<case>/               case.<ext> + expected.txt (regex the findings must match)
-Makefile                           replay / seed-violation / reset + telemetry targets
+  telemetry_report.py              console summary + harness-health panel / HTML dashboard
+tests/
+  golden/held-in/<case>/           fixtures written alongside the rule they check
+  golden/held-out/<case>/          never consulted while authoring a rule — the generalization check
+  golden/clean/<case>/             expected.txt = NONE — the precision half
+  golden/baseline.json             committed per-set rates the replay compares against
+  harness/run.sh                   the gate's own regression suite (no LLM, seconds)
+Makefile                           test-harness / replay / replay-ablate / accept-rubric + telemetry
 ```
 
 ---
@@ -71,9 +78,10 @@ Then, inside the session:
 
 1. **Seed the docs**: say `grill me` — the interview routes your project's vocabulary, agent contract, procedures, and open questions into the 3+1 buckets, and fills the `TODO` slots in `CLAUDE.md`.
 2. **Point the harness**: edit `scripts/harness.conf` (protected paths) and replace the starter rules in `docs/operations/conventions.md` with rules earned from *your* incidents.
-3. **Calibrate**: `make replay` — the golden set replays through a headless grader and prints the catch-rate (2/2 out of the box).
-4. **See the gate work**: `make seed-violation`, ask Claude to commit and push — the hook blocks; `/review` finds the `[BLOCKER]`; fix, re-review, push. Try `touch .claude/grade-ok` — blocked too.
-5. **Work the loop**: `start work` → … → `checkpoint`. Failures the rubric missed become proposed rules + fixtures; finished WIP graduates into permanent docs; `transcript-mine` feeds recurring corrections back into `CLAUDE.md`/`CONTRACT.md`.
+3. **Calibrate**: `make replay` — the three sets replay through the pinned grader and print per-set rates (6/6 out of the box); `make accept-rubric` records them as your baseline.
+4. **See the gate work**: `make seed-violation`, ask Claude to commit and push — the hook blocks; `/review` finds the `[BLOCKER]`; fix, re-review, push. Try `touch .claude/grade-ok`, a `Write` to it, or a bare `grade-marker.sh stamp` — all three refused, and `make test-harness` proves it stays that way.
+5. **Work the loop**: `start work` → … → `checkpoint`. Failures the rubric missed get logged as escapes and become proposed rules + fixtures; finished WIP graduates into permanent docs; `transcript-mine` feeds recurring corrections back into `CLAUDE.md`/`CONTRACT.md`.
+6. **Read the health panel**: `make report` — the second half of the output is the harness measuring itself (catch-rate trend, escapes since the last rubric change, dead-weight candidates, loop-closure ratios), not measuring your activity.
 
 ---
 
@@ -84,11 +92,36 @@ The rubric is graded in three bands — `[BLOCKER]`, `[WARNING]`, and `[CAVEAT]`
 The gate is **tamper-aware**, aimed at false completion:
 
 - the grade marker is a **content fingerprint** of the protected paths, not a timestamp — `touch` can't forge it, any post-grade edit (or revert) invalidates it;
-- hand edits to the marker are **blocked outright** by the hook;
+- **stamping requires a findings record.** `/review` pipes what it found into `grade-marker.sh record`; `stamp` refuses unless that record reports zero blockers and matches the current fingerprint, the current rubric hash, and a freshness TTL. Fingerprint, rubric hash and timestamp are computed by the script, never supplied by the caller, and every stamp lands in a durable grade log;
+- both anchors are **unwritable by hand on both routes** — Bash commands and the file tools (`Write`/`Edit`/`MultiEdit`) are each blocked by their own hook;
+- an **undeterminable diff fails closed.** The outgoing set resolves through `@{u}` → `origin/HEAD` → `origin/main` → `origin/master`; with no baseline the whole branch counts as outgoing and a grade is demanded. (Not academic: `rm -rf .git && git init` is step one of the quickstart.)
 - a push that changes the product *and* its calibration material (golden set, rubric) in one outgoing set is refused as the **weakened-test pattern** — land calibration changes separately, via `/checkpoint` + `make replay`;
 - the replay **discloses uncommitted calibration changes** next to the catch-rate, so a claimed "N/N" always names its baseline.
 
+The gate has its own regression suite: `make test-harness` — 23 assertions, no LLM calls, a scratch git repo per case, three of them pinning bypasses that were open in an earlier revision. The golden set calibrates the *grader*; this calibrates the *gate*.
+
 What stays human by design: `[CAVEAT]` sign-off, stakeholder confirmations, business intent, irreversible operations. The gate frees that attention from re-checking what's already written down.
+
+### Calibration that can fail
+
+A grader whose fixtures were all written next to the rules they check has a catch-rate fitted by construction. Three sets, three jobs:
+
+| Set | Answers |
+|---|---|
+| `held-in/` | does the new rule fire? (written alongside the rule) |
+| `held-out/` | does the rubric **generalize**? (surfaces no rule was authored against, never consulted while writing one) |
+| `clean/` | does it stay **precise**? (`expected.txt` = `NONE` — zero findings required) |
+
+**A rubric change lands only if `held-in` improves and `held-out` does not regress**, compared against a committed baseline. Without `clean/` the suite measures recall alone, and a rubric that flags everything scores perfectly.
+
+### Rules can also leave
+
+The grader model is pinned, so a catch-rate change means a rubric change rather than a silent model swap. Two probes exploit the pin:
+
+- `make replay-tiers` — grade on the cheap model too. A rule only the cheap tier needs is one the frontier model already knows; a rule only the frontier catches is not portable.
+- `make replay-ablate` — grade with **no rubric at all**. Anything still caught is redundant to model priors: dead weight with a decay curve, not earned signal.
+
+The output classifies every fixture as load-bearing / redundant / frontier-only / rubric-miss, and `/checkpoint` proposes retirements from it. A loop that only adds rules eventually grades slower and flags more for nothing — "generic best practice a frontier model already knows adds nothing" becomes a check instead of an instruction.
 
 **Pattern convergence.** [fable-method](https://github.com/Sahir619/fable-method) — a community reconstruction of an agent-verification workflow — independently arrives at the same harness shape, and its domain-adapter triple maps one-to-one onto 3+1: **fraud-patterns** → the rubric + golden set, **evidence** (the source-of-truth probe per check) → Operations, **authority** (who signs off what the harness can't) → `CONTRACT.md`. Cited as convergence, not as measurement.
 
@@ -121,9 +154,13 @@ Don't want it? Delete the `telemetry-log.sh` and `SessionEnd` entries from `.cla
 
 ## Adapting the template — checklist
 
-- [ ] `scripts/harness.conf` — point `PROTECTED_PATHS` at your product; delete `src/app.conf`.
-- [ ] `docs/operations/conventions.md` — replace the starter rules with **incident-earned** rules; generic best practice a frontier model already knows adds nothing.
-- [ ] `tests/golden/` — seed from **historical incidents**, one fixture per landed rule; keep `make replay` at N/N.
+- [ ] `scripts/harness.conf` — point `PROTECTED_PATHS` at your product; delete `src/app.conf`; check the pinned `GRADER_MODEL` / `GRADER_MODEL_CHEAP` aliases exist for you.
+- [ ] `docs/operations/conventions.md` — replace the starter rules with **incident-earned** rules; verify with `make replay-ablate` rather than by judgement.
+- [ ] `tests/golden/held-in/` — seed from **historical incidents**, one fixture per landed rule.
+- [ ] `tests/golden/held-out/` — seed with *different surfaces* of those same incidents, and then don't look at them while writing rules. This is the set that can actually fail.
+- [ ] `tests/golden/clean/` — seed with compliant material, including anything a rule might over-fire on.
+- [ ] `make accept-rubric` — record your own baseline; the shipped one describes the starter rules.
+- [ ] `make test-harness` — should stay green after any edit to the hooks or `grade-marker.sh`.
 - [ ] `CLAUDE.md` — fill the `TODO` slots (map, adapter authority/evidence); `grill-me` will walk you through it.
 - [ ] Review skills' trigger vocabulary (`telemetry-log.sh` triggers, `start-work` phrases) against your own work-loop language.
 - [ ] Check your org's AI-tool policy before moving `scripts/replay.sh` into CI.
