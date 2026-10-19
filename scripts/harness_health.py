@@ -19,6 +19,8 @@ report. Deleting the activity half does not touch this.
 import argparse
 import hashlib
 import re
+import subprocess
+import sys
 from collections import Counter
 from datetime import datetime, timezone
 
@@ -59,10 +61,51 @@ def days_since(ts):
     return (datetime.now(timezone.utc) - t).days
 
 
+def invariant_status():
+    """The invariant gate: armed, how many invariants/waivers, proof, is the tree green.
+
+    No model in this path, so there is no catch-rate to trend. What matters is that
+    the gate is armed, that the current tree holds, and how much of the retro set
+    is real history: fixture-only rows are the template's examples, not evidence
+    that any invariant ever caught anything in this project.
+    """
+    conf = WORKSPACE / "scripts" / "harness.conf"
+    m = re.search(r'^INVARIANT_CHECK="?([^"\n]+)"?', conf.read_text(encoding="utf-8"), re.M) if conf.exists() else None
+    if not m:
+        return None
+    check = WORKSPACE / m.group(1)
+    inv_dir = WORKSPACE / "scripts" / "invariants"
+
+    def rows(path):
+        if not path.exists():
+            return []
+        return [l for l in path.read_text(encoding="utf-8").splitlines() if l.strip() and not l.startswith("#")]
+
+    retro = rows(WORKSPACE / "tests" / "invariants" / "retro.tsv")
+    suite = WORKSPACE / "tests" / "harness" / "run.sh"
+    state, detail = "not-armed", ""
+    if check.exists():
+        proc = subprocess.run([sys.executable, str(check)], capture_output=True, text=True)
+        state = {0: "green", 1: "red"}.get(proc.returncode, "error")
+        out = (proc.stdout + proc.stderr).strip().splitlines()
+        detail = out[-1] if out else ""
+    return {
+        "invariants": len(rows(inv_dir / "registry.tsv")),
+        "exceptions": len(rows(inv_dir / "exceptions.tsv")),
+        "retro": len(retro),
+        "retro_history": sum(1 for r in retro if not r.startswith("fixture:")),
+        "assertions": len(set(re.findall(r'"(invariant-[a-z0-9-]+)"', suite.read_text(encoding="utf-8"))))
+                      if suite.exists() else 0,
+        "state": state, "detail": detail,
+    }
+
+
 def harness_health(days=None):
     cutoff = cutoff_for(days)
     replays = [r for r in load_jsonl(TDIR / "replay.jsonl") if within(r.get("ts"), cutoff)]
-    escapes = [e for e in load_jsonl(TDIR / "escapes.jsonl") if within(e.get("ts"), cutoff)]
+    escape_rows = [e for e in load_jsonl(TDIR / "escapes.jsonl") if within(e.get("ts"), cutoff)]
+    addressed = {e.get("target_ts"): e for e in escape_rows if e.get("type") == "addressed"}
+    escapes = [e for e in escape_rows if e.get("type") != "addressed"]
     grades = [g for g in load_jsonl(TDIR / "grades.jsonl") if within(g.get("ts"), cutoff)]
     cur_rubric = rubric_sha()
 
@@ -83,8 +126,9 @@ def harness_health(days=None):
         trend.append((r.get("ts", "")[:10], tp, tt))
 
     # Rules that keep letting things through, and rules never exercised.
-    escapes_by_rule = Counter((e.get("missed_rule") or "(no rule existed)") for e in escapes)
-    escapes_current = [e for e in escapes if cur_rubric and e.get("rubric_sha256") == cur_rubric]
+    open_escapes = [e for e in escapes if e.get("ts") not in addressed]
+    escapes_by_rule = Counter((e.get("missed_rule") or "(no rule existed)") for e in open_escapes)
+    escapes_current = [e for e in open_escapes if cur_rubric and e.get("rubric_sha256") == cur_rubric]
 
     # Decay read: fixtures the model catches with no rubric at all.
     redundant, frontier_only = [], []
@@ -109,6 +153,9 @@ def harness_health(days=None):
         "rubric_changed": bool(latest and cur_rubric and latest.get("rubric_sha256") != cur_rubric),
         "escapes_by_rule": escapes_by_rule,
         "escapes_current_rubric": len(escapes_current),
+        "escapes_open": len(open_escapes),
+        "escapes_addressed": [(e, addressed[e["ts"]]) for e in escapes if e["ts"] in addressed],
+        "invariants": invariant_status(),
         "blocker_grades": sum(1 for g in grades if g.get("blocker")),
         "caveats": sum(g.get("caveat") or 0 for g in grades),
         "redundant": redundant,
@@ -174,11 +221,32 @@ def health_report(h, lc):
     else:
         print("catch-rate: never replayed — run 'make replay'")
 
+    inv = h.get("invariants")
+    if inv:
+        if inv["state"] == "not-armed":
+            print("invariant gate: NOT ARMED — checker missing; the push hook fails closed")
+        else:
+            exc = f", {inv['exceptions']} waiver(s)" if inv["exceptions"] else ""
+            print(f"invariant gate: armed, {inv['invariants']} invariant(s){exc}, {inv['assertions']} gate "
+                  f"assertion(s), retro {inv['retro']} row(s) ({inv['retro_history']} from history) — "
+                  f"tree {inv['state'].upper()}")
+            if inv["state"] in ("red", "error"):
+                print(f"  ! {inv['detail']} — pushes touching INVARIANT_PATHS are blocked ('make invariants')")
+            if inv["retro"] and not inv["retro_history"]:
+                print("  ! every retro row is a fixture — no invariant has yet been shown to catch a real")
+                print("    escape here; add hit/clear rows on the commits that shipped and fixed one")
+
     n_esc = len(h["escapes"])
     if n_esc:
-        print(f"escapes: {n_esc} total, {h['escapes_current_rubric']} against the current rubric")
+        n_addr = len(h["escapes_addressed"])
+        addr = f", {n_addr} addressed" if n_addr else ""
+        print(f"escapes: {n_esc} total{addr}, {h['escapes_open']} open "
+              f"({h['escapes_current_rubric']} against the current rubric)")
         for rule, cnt in h["escapes_by_rule"].most_common(5):
             print(f"  {cnt}×  {rule}")
+        for esc, rec in h["escapes_addressed"][:3]:
+            print(f"  ✓ addressed: {(esc.get('what') or '')[:64]}")
+            print(f"      by {rec.get('by')}" + (f"  [{rec['test']}]" if rec.get("test") else ""))
     else:
         print("escapes: 0 logged — either the rubric is holding, or /checkpoint is not logging them")
 

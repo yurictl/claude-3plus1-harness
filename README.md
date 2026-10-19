@@ -33,7 +33,7 @@ docs/
   operations/conventions.md        the rubric — [BLOCKER]/[WARNING] rules + how its own edits are accepted
   decisions/ADR-001-*.md           why docs-as-graders (+ anti-tamper, CAVEAT, fail-open amendments)
   wip/harvest-failure-modes.md     open loop: real failures graduate into the rubric
-src/                               placeholder for your product (see scripts/harness.conf)
+src/                               placeholder for your product (see scripts/harness.conf); src/env/ = the twin-config demo
 .claude/
   settings.json                    all hook wiring + anchor deny-list (the on/off switch)
   skills/
@@ -46,10 +46,13 @@ src/                               placeholder for your product (see scripts/har
 scripts/
   harness.conf                     THE file to edit: protected paths, rubric, calibration, pinned models
   grade-marker.sh                  trust anchors: findings record + fingerprint marker (record/stamp/check)
-  hooks/pre-push-grade.sh          the gate: anchor integrity + weakened-test + freshness, fail-closed
+  hooks/pre-push-grade.sh          the gate: anchor integrity + weakened-test + state invariants + freshness, fail-closed
   hooks/protect-anchors.sh         the second door: Write/Edit on either anchor is blocked
   replay.sh                        three-set replay + tier/ablation probes via headless `claude -p`
-  escape-log.sh                    failures that got past a clean grade, made countable
+  check_invariants.py              runs the state invariants over the whole tree (stdlib, no LLM)
+  invariants/registry.tsv          one row per invariant: id, statement, check, provenance
+  invariants/exceptions.tsv        reasoned waivers (a whole-state check has no diff line for `# reason:`)
+  escape-log.sh                    failures that got past a clean grade, made countable — and closable
   hooks/telemetry-log.sh           zero-LLM work-loop event collector
   harness_health.py                the durable half: catch-rate trend, escapes, dead weight
   telemetry_common.py              store access shared by both halves
@@ -61,7 +64,8 @@ tests/
   golden/clean/<case>/             expected.txt = NONE — the precision half
   golden/baseline.json             committed per-set rates the replay compares against
   harness/run.sh                   the gate's own regression suite (no LLM, seconds)
-Makefile                           test-harness / replay / replay-ablate / accept-rubric + telemetry
+  invariants/retro.tsv             each invariant vs the state that shipped its escape (hit) and the fix (clear)
+Makefile                           test-harness / invariants / test-invariants / replay / replay-ablate / accept-rubric + telemetry
 ```
 
 ---
@@ -81,7 +85,7 @@ Then, inside the session:
 1. **Seed the docs**: say `grill me` — the interview routes your project's vocabulary, agent contract, procedures, and open questions into the 3+1 buckets, and fills the `TODO` slots in `CLAUDE.md`.
 2. **Point the harness**: edit `scripts/harness.conf` (protected paths) and replace the starter rules in `docs/operations/conventions.md` with rules earned from *your* incidents.
 3. **Calibrate**: `make replay` — the three sets replay through the pinned grader and print per-set rates (6/6 out of the box); `make accept-rubric` records them as your baseline.
-4. **See the gate work**: `make seed-violation`, ask Claude to commit and push — the hook blocks; `/review` finds the `[BLOCKER]`; fix, re-review, push. Try `touch .claude/grade-ok`, a `Write` to it, or a bare `grade-marker.sh stamp` — all three refused, and `make test-harness` proves it stays that way.
+4. **See the gate work**: `make seed-violation`, ask Claude to commit and push — the hook blocks; `/review` finds the `[BLOCKER]`; fix, re-review, push. Try `touch .claude/grade-ok`, a `Write` to it, or a bare `grade-marker.sh stamp` — all three refused, and `make test-harness` proves it stays that way. Then `make reset && make seed-twin-violation`: a new environment config that `/review` grades clean — nothing in the file is wrong on its own — and the invariant gate still blocks the push, because its twins set a key it does not.
 5. **Work the loop**: `start work` → … → `checkpoint`. Failures the rubric missed get logged as escapes and become proposed rules + fixtures; finished WIP graduates into permanent docs; `transcript-mine` feeds recurring corrections back into `CLAUDE.md`/`CONTRACT.md`.
 6. **Read the health panel**: `make health` — the harness measuring itself (catch-rate trend, escapes since the last rubric change, dead-weight candidates, loop-closure ratios), not measuring your activity. `make report` prints your activity first and appends the same panel.
 
@@ -100,9 +104,28 @@ The gate is **tamper-aware**, aimed at false completion:
 - a push that changes the product *and* its calibration material (golden set, rubric) in one outgoing set is refused as the **weakened-test pattern** — land calibration changes separately, via `/checkpoint` + `make replay`;
 - the replay **discloses uncommitted calibration changes** next to the catch-rate, so a claimed "N/N" always names its baseline.
 
-The gate has its own regression suite: `make test-harness` — 23 assertions, no LLM calls, a scratch git repo per case, three of them pinning bypasses that were open in an earlier revision. The golden set calibrates the *grader*; this calibrates the *gate*.
+- a change can be right in its own diff and still break the system somewhere it did not look — the **state invariants** (below) check the whole tree, not the diff.
+
+The gate has its own regression suite: `make test-harness` — 31 assertions, no LLM calls, a scratch git repo per case, three of them pinning bypasses that were open in an earlier revision. The golden set calibrates the *grader*; this calibrates the *gate*.
 
 What stays human by design: `[CAVEAT]` sign-off, stakeholder confirmations, business intent, irreversible operations. The gate frees that attention from re-checking what's already written down.
+
+### State invariants — what the diff cannot show
+
+The grader reads the diff. The failures that get past a clean grade mostly do not live in it: the setting added to the environment you were working in and never to its twin, the consumer of the thing you renamed, the value that only exists after rendering, the permission something live still relied on. In the deployment this template was distilled from, 9 of the first 10 logged escapes had that shape — and the ablation probe said the grader *knew* most of those rules with no rubric at all. The failure was where it looked, not what it knew.
+
+An invariant is a one-line property of the whole state, checked by code over the whole tree on every push that touches `INVARIANT_PATHS`, whichever file the push touched:
+
+| Piece | Job |
+|---|---|
+| `scripts/invariants/registry.tsv` | id, statement, check, provenance — the escape it encodes |
+| a check (any executable) | gets the tree root; prints `subject<TAB>detail` per violation; exits 0 holds / 1 violated / anything else = could not run, which blocks |
+| `scripts/invariants/exceptions.tsv` | a waiver is a row with a reason — a whole-state check has no diff line to hang `# reason:` on |
+| `tests/invariants/retro.tsv` | the invariant's proof: a commit that shipped its escape must report it (`hit`), the fix must not (`clear`) |
+
+No model in the path, so no anchor, no golden set and no catch-*rate*: a retro row holds or the check is wrong. The registry, its waivers and the retro set are calibration material — adding a waiver in the same push as the violation it waives is the weakened-test pattern, and blocked as such. Ships with one example (`INV-ENV-KEY-PARITY` over `src/env/`, proven by two fixture trees); `make health` says so until a retro row points at a real commit.
+
+The write-back order changes with it: at `/checkpoint` the first question about an escape is *which property of the state should have held?* — and `start work` asks it before the change, when it is still cheap: what must **stay** true, next to what must become true.
 
 ### Calibration that can fail
 
@@ -171,7 +194,8 @@ Don't want the activity half? Delete `scripts/telemetry_report.py`, `scripts/tel
 - [ ] `tests/golden/held-out/` — seed with *different surfaces* of those same incidents, and then don't look at them while writing rules. This is the set that can actually fail.
 - [ ] `tests/golden/clean/` — seed with compliant material, including anything a rule might over-fire on.
 - [ ] `make accept-rubric` — record your own baseline; the shipped one describes the starter rules.
-- [ ] `make test-harness` — should stay green after any edit to the hooks or `grade-marker.sh`.
+- [ ] `scripts/invariants/` — replace `INV-ENV-KEY-PARITY` (and delete `src/env/` with `src/app.conf`) with invariants earned from your escapes; set `INVARIANT_PATHS` in `harness.conf`. Each lands with a `hit`/`clear` pair in `tests/invariants/retro.tsv` on real commits, then `make test-invariants && make invariants`. A gate that is red on arrival gets disabled — add an invariant once the tree satisfies it (or the deviation is a reasoned waiver).
+- [ ] `make test-harness` — should stay green after any edit to the hooks, `grade-marker.sh` or `check_invariants.py`.
 - [ ] `CLAUDE.md` — fill the `TODO` slots (map, adapter authority/evidence); `grill-me` will walk you through it.
 - [ ] Review skills' trigger vocabulary (`telemetry-log.sh` triggers, `start-work` phrases) against your own work-loop language.
 - [ ] Check your org's AI-tool policy before moving `scripts/replay.sh` into CI.

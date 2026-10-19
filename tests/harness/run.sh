@@ -47,6 +47,11 @@ mkscratch() {
   cp "$SRC_ROOT/scripts/hooks/pre-push-grade.sh" "$s/scripts/hooks/"
   cp "$SRC_ROOT/scripts/hooks/protect-anchors.sh" "$s/scripts/hooks/"
   cp "$SRC_ROOT/docs/operations/conventions.md" "$s/docs/operations/"
+  mkdir -p "$s/scripts/invariants" "$s/src/env"
+  cp "$SRC_ROOT/scripts/check_invariants.py" "$s/scripts/"
+  find "$SRC_ROOT/scripts/invariants" -maxdepth 1 -type f -exec cp {} "$s/scripts/invariants/" \;
+  printf '[server]\nport = 8080\n' > "$s/src/env/dev.conf"
+  printf '[server]\nport = 80\n'   > "$s/src/env/prod.conf"
   printf '[server]\nport = 8080\n' > "$s/src/app.conf"
   printf 'case\n' > "$s/tests/golden/held-in/demo/case.txt"
   printf 'x\n'    > "$s/tests/golden/held-in/demo/expected.txt"
@@ -282,6 +287,67 @@ if push_hook "$s"; then
 else
   bad "clean-tree-not-gated" "push blocked with nothing outgoing"
 fi
+
+# --- 13. state invariants: the whole tree, not the diff ----------------------
+# Every case grades first, so a block here can only be the invariant gate.
+graded_push() { record "$1" 0 0 && stamp "$1" && push_hook "$1"; }
+
+# 13a. a change that keeps the twins in step passes
+s=$(mkscratch 1)
+printf 'timeout = 30\n' >> "$s/src/env/dev.conf"; printf 'timeout = 60\n' >> "$s/src/env/prod.conf"
+if graded_push "$s"; then ok "invariant-clean-change-allowed"
+else bad "invariant-clean-change-allowed" "a change keeping both environments in step was blocked"; fi
+
+# 13b. a key added to one twin only blocks, even with a clean grade
+s=$(mkscratch 1)
+printf 'timeout = 30\n' >> "$s/src/env/dev.conf"
+if graded_push "$s"; then bad "invariant-violation-blocks-graded-push" "twin drift pushed after a clean grade"
+else ok "invariant-violation-blocks-graded-push   [the diff reads correct; the untouched twin is wrong]"; fi
+
+# 13c. the violation already sits in the tree; this push touches something else under src
+s=$(mkscratch 1)
+printf 'timeout = 30\n' >> "$s/src/env/dev.conf"
+git -C "$s" commit -qam "drift, already on origin"; git -C "$s" update-ref refs/remotes/origin/main HEAD
+printf '[server]\nport = 9090\n' > "$s/src/app.conf"
+if graded_push "$s"; then bad "invariant-whole-tree-checked" "a standing violation outside the push was waved through"
+else ok "invariant-whole-tree-checked"; fi
+
+# 13d. ...a waiver with a reason unblocks it — but only when it was landed on its own
+printf 'INV-ENV-KEY-PARITY\tsrc/env/prod.conf\tprod reads timeout from the platform default\n' >> "$s/scripts/invariants/exceptions.tsv"
+git -C "$s" add -A scripts/invariants; git -C "$s" commit -qm "declare the waiver" -- scripts/invariants
+git -C "$s" update-ref refs/remotes/origin/main HEAD
+if graded_push "$s"; then ok "invariant-declared-exception-honoured"
+else bad "invariant-declared-exception-honoured" "a landed, reasoned waiver did not unblock"; fi
+
+# 13e. a waiver in the SAME push as the product change is the weakened-test pattern
+s=$(mkscratch 1)
+printf 'timeout = 30\n' >> "$s/src/env/dev.conf"
+printf 'INV-ENV-KEY-PARITY\tsrc/env/prod.conf\tlater\n' >> "$s/scripts/invariants/exceptions.tsv"
+if graded_push "$s"; then bad "invariant-waiver-with-product-blocked" "violation + its waiver pushed together"
+else ok "invariant-waiver-with-product-blocked    [weakening the check in the same push]"; fi
+
+# 13f. a waiver without a reason is not a waiver
+s=$(mkscratch 1)
+printf 'INV-ENV-KEY-PARITY\tsrc/env/prod.conf\t\n' >> "$s/scripts/invariants/exceptions.tsv"
+git -C "$s" commit -qam "reasonless waiver"; git -C "$s" update-ref refs/remotes/origin/main HEAD
+printf '[server]\nport = 9090\n' > "$s/src/app.conf"
+if graded_push "$s"; then bad "invariant-waiver-needs-reason" "a reasonless waiver was accepted"
+else ok "invariant-waiver-needs-reason"; fi
+
+# 13g. the checker gone -> blocked, not skipped
+s=$(mkscratch 1)
+printf '[server]\nport = 9090\n' > "$s/src/app.conf"
+rm -f "$s/scripts/check_invariants.py"
+if graded_push "$s"; then bad "invariant-missing-checker-fails-closed" "push allowed with the checker removed"
+else ok "invariant-missing-checker-fails-closed"; fi
+
+# 13h. a check that crashes is "could not run", never a pass
+s=$(mkscratch 1)
+printf 'import sys\nsys.exit(3)\n' > "$s/scripts/invariants/env-key-parity.py"
+git -C "$s" commit -qam "a check that cannot run"; git -C "$s" update-ref refs/remotes/origin/main HEAD
+printf '[server]\nport = 9090\n' > "$s/src/app.conf"
+if graded_push "$s"; then bad "invariant-crashing-check-fails-closed" "a crashing check let the push through"
+else ok "invariant-crashing-check-fails-closed"; fi
 
 echo
 echo "harness self-tests: ${pass} passed, ${fail} failed"

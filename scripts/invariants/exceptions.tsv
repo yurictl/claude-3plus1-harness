@@ -1,0 +1,6 @@
+# Declared exceptions — an intentional deviation from an invariant, with its reason.
+# Waivers live here, not inline: a whole-state check has no diff line to hang a
+# `# reason:` comment on. A row without a reason is a registry error (the check fails
+# closed). This file is calibration material: it cannot change in the same push as the
+# product (weakened-test gate).
+# id	subject (as the check reports it)	reason

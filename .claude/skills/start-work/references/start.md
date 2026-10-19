@@ -46,9 +46,10 @@ Reason through, in writing:
 1. **Overlap.** Does this duplicate an existing tracking artifact? If yes, propose updating that artifact instead and stop here.
 2. **Constraints.** What do operational docs and decisions tell us we must not break or must follow?
 3. **Validation strategy.** How will we know it's done? Be concrete — a test, a CI check, a `terraform plan` delta, a curl command, a Jira acceptance criterion. If you cannot name a check, escalate to the user before continuing.
-4. **Risk and blast radius.** Anything destructive, hard to reverse, or visible to others? Flag now, not later.
+4. **Invariants at risk.** The check above says what must become true; separately name what must *stay* true — properties of the system that hold today and that this change could break from outside its own diff: sibling or twin configurations, consumers of what is being renamed or removed, rendered or derived output, permissions something live still relies on. For each, say whether an existing check already enforces it (here: `make invariants`, `scripts/invariants/registry.tsv`). If none does, it becomes an acceptance check for this task or a candidate for the registry. Run `make invariants` now, so a red gate at push time is attributable — a tree that was already red is not this task's violation. Skip this for changes that cannot reach beyond their own diff.
+5. **Risk and blast radius.** Anything destructive, hard to reverse, or visible to others? Flag now, not later.
 
-Output a short pre-flight summary to the user (3–5 bullets) covering: chosen tracker, overlap result, key constraints, validation strategy, any risks.
+Output a short pre-flight summary to the user (3–5 bullets) covering: chosen tracker, overlap result, key constraints, validation strategy, invariants at risk (when any), any risks.
 
 ### 5. Create the tracking artifact
 
@@ -76,5 +77,6 @@ Tell the user:
 
 - Creating the tracking file before reading existing ones — leads to filename and frontmatter mismatch
 - Naming a goal without a check — "improve X" with no observable
+- Naming only what must change — the escapes that get past review are what the change broke somewhere it did not look
 - Importing conventions from another project from memory — read CLAUDE.md instead
 - Starting code edits in this phase — that's the next phase

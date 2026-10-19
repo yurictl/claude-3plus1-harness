@@ -1,0 +1,10 @@
+# State invariants — properties of the whole tree that must hold after ANY change,
+# whichever file it touched. The rubric grades the diff; this checks the state.
+# One row per invariant, tab-separated:
+# id	statement (one line: the property)	check (executable, see scripts/check_invariants.py)	provenance (the escape it encodes)
+#
+# The row below is a template example over the placeholder product (src/env/). Replace it
+# with invariants earned from YOUR escapes — the question at /checkpoint is "which property
+# of the state should have held?". Each new row lands with a hit/clear pair in
+# tests/invariants/retro.tsv.
+INV-ENV-KEY-PARITY	Every key set in one src/env/*.conf is set in all of them.	scripts/invariants/env-key-parity.py	template example: a setting added to one environment and never to its twins

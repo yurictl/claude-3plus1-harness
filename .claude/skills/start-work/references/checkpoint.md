@@ -13,6 +13,7 @@ A good checkpoint answers, for the next reader: "what did this session find out,
 Specifically:
 - **New evidence** — commands run, their results, screenshots, log excerpts that clarify the problem
 - **Confirmed / disproved hypotheses** — tick boxes, or note "disproved because X"
+- **Invariants named at start** — held, broken (and caught by what), or newly identified; a broken one nothing caught is an escape for `/checkpoint`
 - **Decisions taken in conversation** — what we chose, why, what we rejected
 - **Stale items corrected** — MRs that merged, blockers that lifted, statuses that changed
 - **Updated next step** — if it shifted from the previous plan

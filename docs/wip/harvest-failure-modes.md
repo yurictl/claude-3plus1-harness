@@ -2,7 +2,7 @@
 title: "Harvest real failure modes into the rubric"
 summary: "Open loop: collect failures the rubric would not have caught and graduate each into conventions.md plus a golden-set fixture. Delete this file when the first month of harvesting is done."
 status: open
-updated: "25-07-2026"
+updated: "19-10-2026"
 ---
 
 # WIP — Harvest real failure modes into the rubric
@@ -15,8 +15,9 @@ The rubric ships with generic starter rules. Its long-term value comes from rule
 
 On every failure that reaches runtime or review despite a clean grade:
 
-1. **Log it as an escape** — `bash scripts/escape-log.sh add --what "…" --missed "…" --destination rule|fixture|wip|sharpen`. Do this first and always: prose in this file is for the thinking, the log is what makes escapes countable in `make report`. A failure described only here cannot be trended.
+1. **Log it as an escape** — `bash scripts/escape-log.sh add --what "…" --missed "…" --destination invariant|rule|fixture|wip|sharpen`. Do this first and always: prose in this file is for the thinking, the log is what makes escapes countable in `make report`. A failure described only here cannot be trended.
 2. Write the failure down here if it needs working out (what happened, why the rubric missed it).
+   **First ask: which property of the whole state should have held?** If the failure sat outside the diff that was graded — a twin left without the change, a consumer of something renamed or removed, a value that exists only once derived — it is an invariant, not a rubric rule: add a row to `scripts/invariants/registry.tsv` with its check, a `hit` row (the commit that shipped it) and a `clear` row (the fix) to `tests/invariants/retro.tsv`, run `make test-invariants && make invariants`, then `escape-log.sh addressed`. Steps 3–6 are for the diff-shaped rest.
 3. Draft the rule for `docs/operations/conventions.md` with severity.
 4. Add a fixture to `tests/golden/held-in/<case>/` reproducing the violation (`case.<ext>` + `expected.txt`).
 5. If the failure is a *different surface* of a rule that already exists, the fixture belongs in `tests/golden/held-out/` — and then don't touch the rule to make it pass. If it was a false positive, add a `tests/golden/clean/` fixture (`expected.txt` = `NONE`).

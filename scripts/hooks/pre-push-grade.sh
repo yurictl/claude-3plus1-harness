@@ -8,14 +8,18 @@
 #   exit 0 — allow the tool call
 #   exit 2 — block it; stderr is shown to the agent as the reason
 #
-# Three gates, in order:
+# Four gates, in order:
 #   1. Anchor integrity — hand-editing .claude/grade-ok or .claude/last-grade.json
 #      via Bash is blocked; the only writer is scripts/grade-marker.sh. The
 #      Write/Edit path is covered by hooks/protect-anchors.sh.
 #   2. Weakened-test gate — a push that changes protected paths AND the
 #      calibration material (golden set, rubric) in one go is the classic
-#      false-completion pattern; blocked, land them separately.
-#   3. Grade freshness — the marker must exist and its fingerprint must match
+#      false-completion pattern; blocked, land them separately. The invariant
+#      registry and its exceptions are calibration material too.
+#   3. State invariants — when the push touches INVARIANT_PATHS, every invariant
+#      in scripts/invariants/registry.tsv must hold over the WHOLE tree (code, no
+#      LLM, no anchor); a check that cannot run blocks.
+#   4. Grade freshness — the marker must exist and its fingerprint must match
 #      the current protected-path state (content-based, not mtime: `touch`
 #      can't forge it, reverts invalidate it).
 #
@@ -114,7 +118,38 @@ if [ -n "$calibration" ]; then
   exit 2
 fi
 
-# --- Gate 3: grade freshness ---------------------------------------------------
+# --- Gate 3: state invariants ------------------------------------------------
+# Deterministic, cheap, and runs before the grade check (a violation makes a
+# re-grade wasted). Triggered by a change under INVARIANT_PATHS, then checks the
+# WHOLE tree, not the outgoing files: an invariant is a property of the state, and
+# "the violation sits in a file this push did not touch" is the twin shape it
+# exists for. Fail-closed: a missing checker or a check that cannot run blocks.
+# shellcheck disable=SC2086
+if [ -n "${INVARIANT_CHECK:-}" ] && [ -n "$(changed_in ${INVARIANT_PATHS:-$PROTECTED_PATHS})" ]; then
+  inv_rc=0
+  if [ ! -r "$INVARIANT_CHECK" ]; then
+    inv_out="the checker ($INVARIANT_CHECK) is missing or unreadable"; inv_rc=2
+  else
+    inv_out=$(python3 "$INVARIANT_CHECK" 2>&1) || inv_rc=$?
+  fi
+  if [ "$inv_rc" -ne 0 ]; then
+    {
+      if [ "$inv_rc" -eq 1 ]; then
+        echo "PUSH BLOCKED: a state invariant does not hold (scripts/invariants/registry.tsv):"
+      else
+        echo "PUSH BLOCKED: the invariant check could not run — failing closed:"
+      fi
+      echo "$inv_out" | sed 's/^/  /'
+      echo "The check covers the whole tree, not only this push: a violation in a file you did"
+      echo "not touch is the twin/consumer shape this gate exists for. Fix the state, or — if the"
+      echo "deviation is intentional — declare it in scripts/invariants/exceptions.tsv with a"
+      echo "reason, in its own push (the registry is calibration material)."
+    } >&2
+    exit 2
+  fi
+fi
+
+# --- Gate 4: grade freshness ---------------------------------------------------
 bash scripts/grade-marker.sh check
 case $? in
   0) ;;

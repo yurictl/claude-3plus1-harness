@@ -1,0 +1,12 @@
+# Retro set — proof that each invariant fires where its escape shipped and goes quiet on the fix.
+# The invariant counterpart of tests/golden/: no model in the path, so no catch-RATE — a row
+# either holds or the check is wrong.
+#
+# ref: a commit of THIS repo (the tree is extracted with `git archive`) — the real form,
+#      `<sha-that-shipped-the-escape>` -> hit, `<sha-of-the-fix>` -> clear — or
+#      `fixture:<dir>` under tests/invariants/fixtures/ for a state history never held
+#      (the template's examples; replace them with commits once you have escapes).
+# expect: hit = a finding for <invariant> whose subject contains <match>; clear = none.
+# ref	invariant	match	expect	note
+fixture:twin-missing-key	INV-ENV-KEY-PARITY	src/env/prod.conf	hit	timeout added to dev.conf only — the twin never got it
+fixture:parity-clean	INV-ENV-KEY-PARITY	src/env/	clear	same key in both environments, different values (values may differ, keys may not)
