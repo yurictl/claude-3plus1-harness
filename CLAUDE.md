@@ -60,7 +60,7 @@ Before a non-trivial change, name the check that will tell you it's done. For pr
 
 Residual trust: the record proves a grade was *reported*, not *performed* — that is `/review`'s hard rule. What it buys is that faking one now costs a fabricated findings record consistent with the diff, and that the fake is durable in the grade log instead of invisible. Escalation path if that proves insufficient: run the replay itself as the gate (see ADR-001).
 
-**Editing the harness?** Run `make test-harness` — 31 assertions over the gate's own behaviour, including three bypasses that were once open (bare `stamp`, `Write` to the marker, commit-then-push with no baseline ref) and the invariant gate's cases (untouched twin blocks, waiver in the same push blocks, a check that cannot run blocks). The golden set calibrates the grader; this suite calibrates the gate.
+**Editing the harness?** Run `make test-harness` — 36 assertions over the gate's own behaviour, including three bypasses that were once open (bare `stamp`, `Write` to the marker, commit-then-push with no baseline ref) the invariant gate's cases (untouched twin blocks, waiver in the same push blocks, a check that cannot run blocks), and the config-deletion bypass (`rm scripts/harness.conf` used to switch every gate off; it now blocks pushes and leaves both anchor guards on their defaults). The golden set calibrates the grader; this suite calibrates the gate.
 
 ## Adapter — evidence · authority · fraud-patterns
 

@@ -18,8 +18,11 @@ set -uo pipefail
 
 payload=$(cat)
 
-cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
-. scripts/harness.conf 2>/dev/null || exit 0
+# Never `|| exit 0` on the config: harness.conf is not a trust anchor, so deleting
+# it would open this door too. Without it the guard falls back to the default
+# anchor paths below — the paths are the point, not the config file.
+cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || true
+. scripts/harness.conf 2>/dev/null || true
 
 MARKER="${GRADE_MARKER:-.claude/grade-ok}"
 RECORD="${GRADE_RECORD:-.claude/last-grade.json}"

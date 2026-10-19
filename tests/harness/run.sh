@@ -349,6 +349,40 @@ printf '[server]\nport = 9090\n' > "$s/src/app.conf"
 if graded_push "$s"; then bad "invariant-crashing-check-fails-closed" "a crashing check let the push through"
 else ok "invariant-crashing-check-fails-closed"; fi
 
+# --- 14. WAS-OPEN: the gate could be switched off by deleting its config -------
+# scripts/harness.conf is not a trust anchor, so nothing stops a session from
+# removing it. Both hooks sourced it with `|| exit 0`: one `rm` and every gate —
+# grade, weakened-test, invariants, and the Write/Edit anchor guard — let
+# everything through, silently. Loading failures now block pushes, leave
+# unrelated commands alone, and the anchor guards fall back to default paths.
+
+# 14a. config gone -> a push with a change is blocked
+s=$(mkscratch 1)
+printf '[server]\nport = 9090\n' > "$s/src/app.conf"
+anchor_path=$(marker "$s")
+rm -f "$s/scripts/harness.conf"
+if push_hook "$s"; then bad "missing-harness-conf-fails-closed" "push allowed with harness.conf removed"
+else ok "missing-harness-conf-fails-closed       [WAS-OPEN: rm one file disabled the gate]"; fi
+
+# 14b. ...while a non-push command is still allowed
+if bash_hook "$s" "ls -la"; then ok "missing-config-still-allows-reads"
+else bad "missing-config-still-allows-reads" "an unrelated command was blocked"; fi
+
+# 14c. ...and the Bash anchor guard still holds without it
+if bash_hook "$s" "touch $anchor_path"; then bad "bash-anchor-guard-survives-missing-config" "anchor write via Bash allowed"
+else ok "bash-anchor-guard-survives-missing-config"; fi
+
+# 14d. ...and so does the Write/Edit anchor guard (the second door)
+if file_hook "$s" Write "$s/$anchor_path"; then bad "file-anchor-guard-survives-missing-config" "Write to the marker allowed without harness.conf"
+else ok "file-anchor-guard-survives-missing-config [WAS-OPEN: same rm opened the file-tool door]"; fi
+
+# 14e. a half-broken config (sources with an error, defines nothing the gate needs) blocks
+s=$(mkscratch 1)
+printf '[server]\nport = 9090\n' > "$s/src/app.conf"
+printf 'PROTECTED_PATHS=(\n' > "$s/scripts/harness.conf"   # unterminated array
+if push_hook "$s"; then bad "broken-harness-conf-fails-closed" "push allowed with a syntactically broken config"
+else ok "broken-harness-conf-fails-closed"; fi
+
 echo
 echo "harness self-tests: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ]

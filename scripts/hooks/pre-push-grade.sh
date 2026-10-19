@@ -28,13 +28,27 @@
 # protected file as outgoing and demands a grade. An undeterminable diff used to
 # mean "nothing changed" — which silently disabled the whole gate on any repo
 # freshly `git init`ed from this template.
+# The same holds one level up: if scripts/harness.conf cannot be loaded, a push
+# is blocked rather than waved through (non-push commands are unaffected, and
+# the anchor guard keeps working from its defaults).
 set -uo pipefail
 
 payload=$(cat)
 command=$(printf '%s' "$payload" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("tool_input",{}).get("command",""))' 2>/dev/null || true)
 
-cd "${CLAUDE_PROJECT_DIR:-.}" || exit 0
-. scripts/harness.conf 2>/dev/null || exit 0
+# Loading the harness is best-effort HERE and mandatory before the push gates below.
+# The split matters: a missing config must not block `ls`, and it must not wave a
+# push through either. harness.conf is not a trust anchor, so nothing stops a
+# session from deleting it — sourcing it with `|| exit 0` made `rm` a one-command,
+# silent, complete bypass of every gate. A partially sourced (syntactically broken)
+# file returns non-zero but can still define half its names, so the load is
+# confirmed by the name the gate actually needs, not by the exit code alone.
+harness_load_error=""
+cd "${CLAUDE_PROJECT_DIR:-.}" 2>/dev/null || harness_load_error="cannot enter the project root (CLAUDE_PROJECT_DIR=${CLAUDE_PROJECT_DIR:-unset})"
+if [ -z "$harness_load_error" ]; then
+  . scripts/harness.conf 2>/dev/null
+  [ -n "${PROTECTED_PATHS:-}" ] || harness_load_error="scripts/harness.conf is missing, unreadable or incomplete"
+fi
 
 MARKER="${GRADE_MARKER:-.claude/grade-ok}"
 RECORD="${GRADE_RECORD:-.claude/last-grade.json}"
@@ -60,6 +74,18 @@ case "$command" in
   *"git push"*) ;;
   *) exit 0 ;;
 esac
+
+# A push is about to run and the harness could not be loaded: the gate cannot tell
+# what is protected, which is not the same as "nothing is". Fail closed.
+if [ -n "$harness_load_error" ]; then
+  {
+    echo "PUSH BLOCKED: the verification harness could not be loaded — $harness_load_error."
+    echo "Without it the gate cannot tell which paths are protected or which rubric applies,"
+    echo "so it fails closed rather than assuming this push is ungated."
+    echo "Restore the file and retry; 'make test-harness' confirms the gate is healthy again."
+  } >&2
+  exit 2
+fi
 
 # --- outgoing-set resolution ---------------------------------------------------
 # Base ref for "committed but not yet pushed", in order of trustworthiness:

@@ -100,13 +100,14 @@ The gate is **tamper-aware**, aimed at false completion:
 - the grade marker is a **content fingerprint** of the protected paths, not a timestamp — `touch` can't forge it, any post-grade edit (or revert) invalidates it;
 - **stamping requires a findings record.** `/review` pipes what it found into `grade-marker.sh record`; `stamp` refuses unless that record reports zero blockers and matches the current fingerprint, the current rubric hash, and a freshness TTL. Fingerprint, rubric hash and timestamp are computed by the script, never supplied by the caller, and every stamp lands in a durable grade log;
 - both anchors are **unwritable by hand on both routes** — Bash commands and the file tools (`Write`/`Edit`/`MultiEdit`) are each blocked by their own hook;
+- a **missing or broken harness config fails closed** — deleting `scripts/harness.conf` used to switch every gate off; now a push is blocked, other commands pass, and both anchor guards fall back to their default paths;
 - an **undeterminable diff fails closed.** The outgoing set resolves through `@{u}` → `origin/HEAD` → `origin/main` → `origin/master`; with no baseline the whole branch counts as outgoing and a grade is demanded. (Not academic: `rm -rf .git && git init` is step one of the quickstart.)
 - a push that changes the product *and* its calibration material (golden set, rubric) in one outgoing set is refused as the **weakened-test pattern** — land calibration changes separately, via `/checkpoint` + `make replay`;
 - the replay **discloses uncommitted calibration changes** next to the catch-rate, so a claimed "N/N" always names its baseline.
 
 - a change can be right in its own diff and still break the system somewhere it did not look — the **state invariants** (below) check the whole tree, not the diff.
 
-The gate has its own regression suite: `make test-harness` — 31 assertions, no LLM calls, a scratch git repo per case, three of them pinning bypasses that were open in an earlier revision. The golden set calibrates the *grader*; this calibrates the *gate*.
+The gate has its own regression suite: `make test-harness` — 36 assertions, no LLM calls, a scratch git repo per case, three of them pinning bypasses that were open in an earlier revision. The golden set calibrates the *grader*; this calibrates the *gate*.
 
 What stays human by design: `[CAVEAT]` sign-off, stakeholder confirmations, business intent, irreversible operations. The gate frees that attention from re-checking what's already written down.
 
