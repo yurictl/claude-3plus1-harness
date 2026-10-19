@@ -236,6 +236,11 @@ elif bpath.exists():
     try:
         base = json.loads(bpath.read_text())
         print(f"\nbaseline ({base.get('updated','?')}, model {base.get('model','?')}):")
+        base_model = base.get("model")
+        if base_model and base_model != os.environ["MODEL"]:
+            print(f"  ! baseline was graded by '{base_model}', this run by '{os.environ['MODEL']}' —")
+            print("    the deltas below mix a rubric change with a model change and attribute")
+            print("    neither. Re-run 'make accept-rubric' on the current pin before reading them.")
         for n in names:
             b = base.get("sets", {}).get(n)
             if not b:

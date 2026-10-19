@@ -29,7 +29,7 @@ _(none yet — seed with your first real incident)_
 
 ## First ablation read (25-07-2026) — the starter rules are mostly dead weight
 
-`make replay-ablate`, pinned `sonnet` + cheap `haiku`, against the two shipped starter rules:
+`make replay-ablate`, pinned `sonnet` + cheap `haiku` (aliases at the time; the pin is exact model IDs as of 27-07 — re-run before comparing), against the two shipped starter rules:
 
 | Fixture | pinned | cheap | no rubric | standing |
 |---|---|---|---|---|
@@ -50,3 +50,25 @@ No retirement action taken — the starter rules exist to make the template runn
 - [ ] `/checkpoint` logs escapes and proposes entries here without being reminded.
 - [ ] `make replay-ablate` has been run once and at least one shipped rule has been classified (kept or retired) from its table rather than from taste.
 - [ ] This file is deleted; the protocol lives on as habit (or graduates into CLAUDE.md if it keeps being forgotten). The escape log survives it — that is the durable half.
+
+## Open: `held-out/bare-todo` is flaky, so the acceptance rule fires on noise (27-07-2026)
+
+Found while re-baselining after the grader pin was changed from the `sonnet` alias to `claude-sonnet-5`. The full replay came back 5/6 with `held-out/bare-todo` missed, which reads as a held-out regression and blocks the change under the acceptance rule. It is not a regression:
+
+| Run | `held-out/bare-todo` |
+|---|---|
+| full replay | MISS |
+| `--set held-out` ×3 | MISS, MISS, PASS |
+
+Same model, same rubric, same fixture — the grader reports the bare `TODO` as a `[WARNING]` maybe one time in three. Consistent with the 25-07 ablation read: this is the one fixture whose catch depends on the rubric rather than model priors, so it sits closest to the decision boundary and is the one most exposed to sampling variance.
+
+**Why it matters beyond one fixture.** Calibration is single-sample: one `claude -p` per fixture, six fixtures, and a pass/fail regex. A fixture that passes p≈0.4 of the time makes `make replay` a coin flip on whether a legitimate rubric change lands, and makes a recorded baseline a snapshot of one draw rather than a rate. The acceptance rule ("held-in improves, held-out does not regress") assumes the measurement is stable; it isn't, and nothing in the output says so. A run that reports `2/2` and a run that reports `1/2` are currently indistinguishable from a real rubric change.
+
+**Not fixed here — deliberately.** Re-baselining now would bless one draw as the new truth, which is the false-completion pattern the harness exists to catch. `baseline.json` is therefore left recording `model: sonnet`; every replay warns that the baseline and the pin disagree until this is resolved.
+
+Options, cheapest first:
+1. **N-of-M sampling** — grade each fixture k times, record pass-fraction instead of pass/fail, and make the acceptance rule compare fractions with a margin. Multiplies replay cost by k.
+2. **Tighten the fixture** — the expectation regex (`[WARNING].*(TODO|tracker|issue)`) may be narrower than the finding the grader actually writes. Check the raw output before assuming a capability gap; a wording mismatch is a cheaper cause than variance.
+3. **Report flakiness rather than remove it** — keep the fixture, track per-fixture pass-rate across runs in `replay.jsonl` (the data is already there), and surface unstable fixtures in the health panel. A flaky fixture is itself a finding about the rule.
+
+Whichever lands, the durable lesson is the one this file exists for: a single-sample LLM grader is a *measurement*, and a measurement without a variance estimate cannot support an accept/reject rule.

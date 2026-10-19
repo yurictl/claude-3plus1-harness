@@ -23,7 +23,8 @@ This project uses the 3+1 documentation framework with an executable verificatio
 | Rule retirement | `make replay-ablate` — which rules the model already knows |
 | Escape log | `scripts/escape-log.sh` → `.claude/telemetry/escapes.jsonl` |
 | Harness config | `scripts/harness.conf` — protected paths, rubric, calibration paths, pinned models |
-| Telemetry | `.claude/telemetry/` (local, gitignored) — `make report` / `make html` |
+| Harness health | `scripts/harness_health.py` — `make health` (standalone; the half that stays) |
+| Activity telemetry | `.claude/telemetry/` (local, gitignored) — `make report` / `make html` (the half to drop when the platform ships its own) |
 
 ## Severity model
 
@@ -77,4 +78,6 @@ A rubric change lands only if `held-in` improves and `held-out` does not regress
 
 ## What the measurement is for
 
-`make report` has two halves, and they answer different questions. Sessions, prompts, tokens and tool mix say the harness is being **used**. The harness-health panel — per-set catch-rate and its trend, escapes since the last rubric change, stamped grades, dead-weight candidates, loop-closure ratios — says whether it **works**. Activity is not progress; if only the first half moves, the loop is leaking.
+Two halves, two questions, and now two files. Sessions, prompts, tokens and tool mix (`telemetry_report.py`, `make report`) say the harness is being **used**. The harness-health panel (`harness_health.py`, `make health`) — per-set catch-rate and its trend, escapes since the last rubric change, stamped grades, dead-weight candidates, loop-closure ratios — says whether it **works**. Activity is not progress; if only the first half moves, the loop is leaking.
+
+The split is at the file level on purpose. The activity half is generic agent observability and carries a decay curve — delete it when the platform measures this better, and `make health` keeps working. The health half is computed from this project's rubric and golden set; nothing outside the project can produce it. Keep that seam intact when editing either file.

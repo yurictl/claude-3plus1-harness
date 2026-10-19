@@ -60,4 +60,4 @@ The loop that only ever adds rules eventually grades slower, flags more, and rea
 
 ## Grading model
 
-The grader model is pinned in `scripts/harness.conf` (`GRADER_MODEL`), so a change in catch-rate means a change in this file — not a silent model swap underneath it. Re-run `make replay` after a deliberate model change and record a new baseline if the rates move.
+The grader model is pinned in `scripts/harness.conf` (`GRADER_MODEL`) to an **exact model ID, never an alias** — `sonnet` and `haiku` resolve to whatever the current generation is, so they would move the catch-rate under an unchanged rubric. With a full ID, a change in catch-rate means a change in this file. After a deliberate model bump, re-run `make replay` and then `make accept-rubric`; until you do, the replay warns that the baseline was graded by a different model and that its deltas attribute neither cause.

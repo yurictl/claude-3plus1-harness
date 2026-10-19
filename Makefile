@@ -1,4 +1,4 @@
-.PHONY: replay replay-tiers replay-ablate accept-rubric test-harness test seed-violation reset report html backfill seed-telemetry reset-telemetry escapes
+.PHONY: replay replay-tiers replay-ablate accept-rubric test-harness test seed-violation reset health report html backfill seed-telemetry reset-telemetry escapes
 
 # --- verification harness ----------------------------------------------------
 
@@ -28,9 +28,16 @@ reset:             ## remove the demo violation, the grade marker and the grade 
 	rm -f src/demo-violation.txt .claude/grade-ok .claude/last-grade.json
 	@echo "Clean."
 
-# --- telemetry -----------------------------------------------------------------
+# --- harness health: does the harness WORK -------------------------------------
+# Independent of the activity half below — reads only replay/escape/grade logs.
 
-report:            ## console summary + harness-health panel
+health:            ## catch-rate + trend, escapes, dead weight, loop closure
+	@python3 scripts/harness_health.py
+
+# --- activity telemetry: is the harness USED -----------------------------------
+# Generic agent observability; the half to drop when the platform ships its own.
+
+report:            ## activity summary + the harness-health panel
 	@python3 scripts/telemetry_report.py
 
 html:              ## static dashboard -> .claude/telemetry/report.html

@@ -51,8 +51,10 @@ scripts/
   replay.sh                        three-set replay + tier/ablation probes via headless `claude -p`
   escape-log.sh                    failures that got past a clean grade, made countable
   hooks/telemetry-log.sh           zero-LLM work-loop event collector
-  telemetry_harvest.py             SessionEnd transcript -> durable session aggregate
-  telemetry_report.py              console summary + harness-health panel / HTML dashboard
+  harness_health.py                the durable half: catch-rate trend, escapes, dead weight
+  telemetry_common.py              store access shared by both halves
+  telemetry_harvest.py             activity: SessionEnd transcript -> session aggregate
+  telemetry_report.py              activity: console summary / HTML dashboard (deletable)
 tests/
   golden/held-in/<case>/           fixtures written alongside the rule they check
   golden/held-out/<case>/          never consulted while authoring a rule — the generalization check
@@ -81,7 +83,7 @@ Then, inside the session:
 3. **Calibrate**: `make replay` — the three sets replay through the pinned grader and print per-set rates (6/6 out of the box); `make accept-rubric` records them as your baseline.
 4. **See the gate work**: `make seed-violation`, ask Claude to commit and push — the hook blocks; `/review` finds the `[BLOCKER]`; fix, re-review, push. Try `touch .claude/grade-ok`, a `Write` to it, or a bare `grade-marker.sh stamp` — all three refused, and `make test-harness` proves it stays that way.
 5. **Work the loop**: `start work` → … → `checkpoint`. Failures the rubric missed get logged as escapes and become proposed rules + fixtures; finished WIP graduates into permanent docs; `transcript-mine` feeds recurring corrections back into `CLAUDE.md`/`CONTRACT.md`.
-6. **Read the health panel**: `make report` — the second half of the output is the harness measuring itself (catch-rate trend, escapes since the last rubric change, dead-weight candidates, loop-closure ratios), not measuring your activity.
+6. **Read the health panel**: `make health` — the harness measuring itself (catch-rate trend, escapes since the last rubric change, dead-weight candidates, loop-closure ratios), not measuring your activity. `make report` prints your activity first and appends the same panel.
 
 ---
 
@@ -116,7 +118,7 @@ A grader whose fixtures were all written next to the rules they check has a catc
 
 ### Rules can also leave
 
-The grader model is pinned, so a catch-rate change means a rubric change rather than a silent model swap. Two probes exploit the pin:
+The grader model is pinned to an exact model ID — not a floating alias like `sonnet`, which would move under you at the next release — so a catch-rate change means a rubric change rather than a silent model swap. If the committed baseline was graded by a different model than the current pin, the replay says so instead of printing deltas that attribute neither. Two probes exploit the pin:
 
 - `make replay-tiers` — grade on the cheap model too. A rule only the cheap tier needs is one the frontier model already knows; a rule only the frontier catches is not portable.
 - `make replay-ablate` — grade with **no rubric at all**. Anything still caught is redundant to model priors: dead weight with a decay curve, not earned signal.
@@ -148,13 +150,22 @@ Each skill writes to a layer the next one reads. Skip any of them and the loop l
 
 Local observability at 1% of the weight of a real stack — no server, no database, no dependencies. Event log (`.claude/telemetry/events.jsonl`) + session aggregates (`sessions.jsonl`) + `make report` / `make html` for a self-contained dashboard. Collectors always exit 0 (telemetry can never block the agent); stores are local, gitignored, disposable.
 
-Don't want it? Delete the `telemetry-log.sh` and `SessionEnd` entries from `.claude/settings.json` and `scripts/telemetry_*` — the harness is independent of it.
+**Two halves, split at the file level — the seam is the point.**
+
+| | Says | Files | Command | Outlook |
+|---|---|---|---|---|
+| **Activity** | the harness is *used* | `telemetry_report.py`, `telemetry_harvest.py`, `seed_demo.py` | `make report` / `make html` | generic agent observability — designed to be deleted the day the platform does it better |
+| **Health** | the harness *works* | `harness_health.py` | `make health` | computed from *your* rubric and golden set; nothing else can produce it |
+
+`harness_health.py` is standalone: it reads `replay.jsonl` / `escapes.jsonl` / `grades.jsonl` and falls back to the event log for its per-session denominator, so the durable half survives the activity half being removed. `telemetry_report.py` appends the health panel when it is present (`--no-health` to skip).
+
+Don't want the activity half? Delete `scripts/telemetry_report.py`, `scripts/telemetry_harvest.py`, `scripts/seed_demo.py` and the `UserPromptSubmit` / `SessionEnd` entries in `.claude/settings.json`. `make health` keeps working. Don't want telemetry at all? Also drop `harness_health.py`, `telemetry_common.py` and the remaining `telemetry-log.sh` hook entries — the verification harness is independent of all of it.
 
 ---
 
 ## Adapting the template — checklist
 
-- [ ] `scripts/harness.conf` — point `PROTECTED_PATHS` at your product; delete `src/app.conf`; check the pinned `GRADER_MODEL` / `GRADER_MODEL_CHEAP` aliases exist for you.
+- [ ] `scripts/harness.conf` — point `PROTECTED_PATHS` at your product; delete `src/app.conf`; check the pinned `GRADER_MODEL` / `GRADER_MODEL_CHEAP` are available to you. Keep them **exact model IDs, never aliases** — `sonnet` and `haiku` float to the current generation, which is the silent model swap the pin exists to rule out.
 - [ ] `docs/operations/conventions.md` — replace the starter rules with **incident-earned** rules; verify with `make replay-ablate` rather than by judgement.
 - [ ] `tests/golden/held-in/` — seed from **historical incidents**, one fixture per landed rule.
 - [ ] `tests/golden/held-out/` — seed with *different surfaces* of those same incidents, and then don't look at them while writing rules. This is the set that can actually fail.

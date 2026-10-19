@@ -1,8 +1,8 @@
 ---
 title: "ADR-001: Conventions docs are executed by the harness, not read by humans at review time"
-summary: "Turn severity-tagged convention docs into machine-run graders (skill + hook + golden set) instead of relying on reviewers to apply them from memory. Amended 21-07 (anti-tamper, CAVEAT band) and 25-07 (three fail-open paths closed; held-out/clean split; harness-health measurement; ablation as a decay detector)."
+summary: "Turn severity-tagged convention docs into machine-run graders (skill + hook + golden set) instead of relying on reviewers to apply them from memory. Amended 21-07 (anti-tamper, CAVEAT band), 25-07 (three fail-open paths closed; held-out/clean split; harness-health measurement; ablation as a decay detector) and 27-07 (the model pin was a floating alias; telemetry split along the used/works seam)."
 status: accepted
-updated: "25-07-2026"
+updated: "27-07-2026"
 ---
 
 # ADR-001: Conventions docs are executed by the harness, not read by humans at review time
@@ -53,4 +53,18 @@ A review of the gate against its own claims found that the enforcement layer thi
 
 **Grader ablation as a decay detector.** The grader model is now pinned (`GRADER_MODEL`), so a catch-rate change means a rubric change rather than a silent model swap. Two probes exploit the pin: `--tiers` grades on the cheap model as well, and `--ablate` grades with **no rubric at all**. A fixture still caught without the rubric is a rule redundant to model priors — dead weight with a decay curve, not earned signal — and this ADR's loop had no way to remove anything. `make replay-ablate` prints the classification (load-bearing / redundant / frontier-only / rubric miss), and `/checkpoint` now proposes retirements from it. This is the concrete answer to "generic best practice a frontier model already knows adds nothing", which until now was an instruction to the author rather than a check.
 
-**New consequence.** The gate has its own regression suite (`tests/harness/run.sh`, `make test-harness`): zero LLM calls, a scratch git repo per case, 23 assertions covering the three bypasses plus the invariants that already existed. The golden set calibrates the grader; this calibrates the gate. Harness edits are now themselves gated by a test suite — which is the same argument this ADR makes about convention docs, applied one level up.
+**New consequence (25-07).** The gate has its own regression suite (`tests/harness/run.sh`, `make test-harness`): zero LLM calls, a scratch git repo per case, 23 assertions covering the three bypasses plus the invariants that already existed. The golden set calibrates the grader; this calibrates the gate. Harness edits are now themselves gated by a test suite — which is the same argument this ADR makes about convention docs, applied one level up.
+
+## Amendment (27-07-2026): the pin was not a pin, and the telemetry seam
+
+Two corrections, both to claims this ADR already made rather than to new ground.
+
+**The grader "pin" was a floating alias.** The 25-07 amendment above asserts that pinning `GRADER_MODEL` makes a catch-rate change mean a rubric change. The configured values were `sonnet` and `haiku` — aliases that resolve to whatever the current generation of each tier is. A model release would therefore move the catch-rate underneath an unchanged rubric, and `baseline.json` would still record `"model": "sonnet"`, so nothing in the output would say the comparison had become meaningless. The property the ablation and tier probes rest on — that the only moving part is the rubric — did not hold.
+
+**Now:** `harness.conf` pins exact model IDs (`claude-sonnet-5`, `claude-haiku-4-5-20251001`), and `replay.sh` prints a warning when the committed baseline's `model` differs from the current pin, stating that the deltas mix a rubric change with a model change and attribute neither. Bumping the grader is now a deliberate two-step: edit the pin, then `make accept-rubric` to re-baseline on it. The warning is the enforcement half — without it the config fix would decay the next time someone edited the pin and forgot to re-accept.
+
+**Telemetry is two products in one file.** The 25-07 amendment added the harness-health panel and named the distinction — activity says the harness is *used*, health says it *works* — but both halves lived in one 405-line `telemetry_report.py`, with the health panel's loop-closure ratios reading the activity collector's aggregate. The distinction was documented and not structural, so the half with a decay curve could not be removed without taking the durable half with it. Activity metrics are generic agent observability: session counts, prompts, tokens, tool mix are what an agent platform ships natively, and this one's version of them is a liability the day it does. Catch-rate trend, escapes past a clean grade, dead-weight candidates and loop closure are computed from this project's own rubric and golden set; no platform will ever produce them.
+
+**Now:** three files along that seam — `telemetry_common.py` (store access), `harness_health.py` (the durable half, standalone: reads `replay.jsonl` / `escapes.jsonl` / `grades.jsonl`, and derives its per-session denominator from the event log when the harvester is absent), and `telemetry_report.py` (the activity half, which appends the health panel when present). `make health` runs the durable half alone. Deleting `telemetry_report.py`, `telemetry_harvest.py`, `seed_demo.py` and the `UserPromptSubmit` / `SessionEnd` hook entries leaves the health panel working, verified by running it against a tree with those files removed.
+
+**Consequence.** The template now states its own decay curve in its file layout rather than only in prose: the components that measure whether the harness works are separable from the components that a better platform makes redundant. That is the same argument `--ablate` makes about rubric rules — a rule the model already knows is dead weight — applied to the harness's own code.

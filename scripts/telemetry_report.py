@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
-"""Lightweight telemetry report over the durable stores (agentsview-inspired,
-no server / no DB / no deps — stdlib only).
+"""Activity telemetry over the durable stores (agentsview-inspired, no server /
+no DB / no deps — stdlib only).
+
+This is the ACTIVITY half: sessions, prompts, tokens, tool mix, skill mix. It
+says the harness is being *used*. It is generic agent observability — the kind
+of thing an agent platform eventually ships natively — and it is deliberately
+separable: delete this file, `seed_demo.py`, `telemetry_harvest.py` and the
+`UserPromptSubmit` / `SessionEnd` hook entries, and the harness-health half
+(`harness_health.py`, `make health`) keeps working untouched.
 
 Reads .claude/telemetry/sessions.jsonl (per-session aggregates harvested from
 transcripts by telemetry_harvest.py) and .claude/telemetry/events.jsonl
 (work-loop events from the hook collector).
 
-  telemetry_report.py                console summary
+  telemetry_report.py                console summary + harness-health panel
   telemetry_report.py --days 30      restrict to the last N days
+  telemetry_report.py --no-health    activity only, skip the health panel
   telemetry_report.py --html PATH    also write a self-contained static
                                      dashboard (light+dark, no JS libraries)
 
@@ -16,153 +24,20 @@ Design notes: README.md in this example.
 
 import argparse
 import html
-import json
-import os
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-WORKSPACE = Path(os.environ.get("CLAUDE_PROJECT_DIR", Path(__file__).resolve().parent.parent))
-TDIR = WORKSPACE / ".claude" / "telemetry"
+from telemetry_common import TDIR, cutoff_for, fmt_tokens, load_jsonl, within
 
-
-def load_jsonl(path):
-    if not path.exists():
-        return []
-    out = []
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            try:
-                out.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return out
-
-
-def within(rec_ts, cutoff):
-    return cutoff is None or (rec_ts or "") >= cutoff
-
-
-def fmt_tokens(n):
-    if n >= 1_000_000_000:
-        return f"{n/1e9:.1f}B"
-    if n >= 1_000_000:
-        return f"{n/1e6:.1f}M"
-    if n >= 1_000:
-        return f"{n/1e3:.0f}k"
-    return str(n)
-
-
-def rubric_sha():
-    """Short hash of the current rubric — the key escapes and replays are filed under."""
-    import configparser  # noqa: F401  (kept out of module scope: only needed here)
-    import hashlib
-    import re
-    conf = WORKSPACE / "scripts" / "harness.conf"
-    rubric = "docs/operations/conventions.md"
-    if conf.exists():
-        m = re.search(r'^RUBRIC="?([^"\n]+)"?', conf.read_text(encoding="utf-8"), re.M)
-        if m:
-            rubric = m.group(1)
-    p = WORKSPACE / rubric
-    if not p.exists():
-        return None
-    return hashlib.sha256(p.read_bytes()).hexdigest()[:16]
-
-
-def days_since(ts):
-    if not ts:
-        return None
-    try:
-        t = datetime.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
-    except ValueError:
-        return None
-    return (datetime.now(timezone.utc) - t).days
-
-
-def harness_health(days=None):
-    """The half of the telemetry that measures the HARNESS, not the activity.
-
-    Activity metrics (sessions, prompts, tokens) say the harness is being used.
-    These say whether it works: does the grader still catch what it used to
-    (replay), did anything get past it (escapes), is the loop actually closing
-    (checkpoint / graduate ratios). Without this section the dashboard reports
-    effort and calls it progress.
-    """
-    cutoff = None
-    if days:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    replays = [r for r in load_jsonl(TDIR / "replay.jsonl") if within(r.get("ts"), cutoff)]
-    escapes = [e for e in load_jsonl(TDIR / "escapes.jsonl") if within(e.get("ts"), cutoff)]
-    grades = [g for g in load_jsonl(TDIR / "grades.jsonl") if within(g.get("ts"), cutoff)]
-    cur_rubric = rubric_sha()
-
-    latest = replays[-1] if replays else None
-    trend = []
-    for r in replays[-6:]:
-        sets = r.get("sets") or {}
-        tp = sum(v.get("pass", 0) for v in sets.values())
-        tt = sum(v.get("total", 0) for v in sets.values())
-        trend.append((r.get("ts", "")[:10], tp, tt))
-
-    # Rules that keep letting things through, and rules never exercised.
-    escapes_by_rule = Counter((e.get("missed_rule") or "(no rule existed)") for e in escapes)
-    escapes_current = [e for e in escapes if cur_rubric and e.get("rubric_sha256") == cur_rubric]
-
-    # Decay read: fixtures the model catches with no rubric at all.
-    redundant, frontier_only = [], []
-    for r in reversed(replays):           # newest run that carries the probes
-        fx = r.get("fixtures") or []
-        if any(f.get("caught_without_rubric") is not None for f in fx):
-            redundant = [f"{f['set']}/{f['fixture']}" for f in fx if f.get("caught_without_rubric") is True]
-            break
-    for r in reversed(replays):
-        fx = r.get("fixtures") or []
-        if any(f.get("cheap_caught") is not None for f in fx):
-            frontier_only = [f"{f['set']}/{f['fixture']}" for f in fx
-                             if f.get("cheap_caught") is False and f.get("verdict") == "pass"]
-            break
-
-    return {
-        "replays": replays, "escapes": escapes, "grades": grades,
-        "latest": latest, "trend": trend,
-        "days_since_replay": days_since(latest.get("ts")) if latest else None,
-        "rubric_sha": cur_rubric,
-        "rubric_changed": bool(latest and cur_rubric and latest.get("rubric_sha256") != cur_rubric),
-        "escapes_by_rule": escapes_by_rule,
-        "escapes_current_rubric": len(escapes_current),
-        "blocker_grades": sum(1 for g in grades if g.get("blocker")),
-        "caveats": sum(g.get("caveat") or 0 for g in grades),
-        "redundant": redundant,
-        "frontier_only": frontier_only,
-    }
-
-
-def loop_closure(d):
-    """Ratios that show whether the four-skill loop leaks.
-
-    Each skill writes to the layer the next one reads, so a lopsided mix is a
-    diagnosis: start-work without checkpoint = the rubric never compounds;
-    start-work without graduate = the WIP layer rots.
-    """
-    ev = d["event_mix"]
-    sk = d["skill_mix"]
-    sessions = max(len(d["sessions"]), 1)
-    starts = ev.get("start-work", 0) + sk.get("start-work", 0)
-    checks = ev.get("checkpoint", 0) + sk.get("checkpoint", 0)
-    grads = ev.get("graduate", 0) + sk.get("graduate", 0)
-    return {
-        "checkpoint_per_session": round(checks / sessions, 2),
-        "graduate_per_start": (round(grads / starts, 2) if starts else None),
-        "starts": starts, "checkpoints": checks, "graduates": grads,
-        "pushes": ev.get("push", 0),
-    }
+try:  # the health half is independent; keep working if it has been moved out
+    from harness_health import harness_health, health_report, loop_closure
+except ImportError:  # pragma: no cover
+    harness_health = health_report = loop_closure = None
 
 
 def collect(days=None):
-    cutoff = None
-    if days:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cutoff = cutoff_for(days)
     sessions = [s for s in load_jsonl(TDIR / "sessions.jsonl") if within(s.get("start"), cutoff)]
     events = [e for e in load_jsonl(TDIR / "events.jsonl") if within(e.get("ts"), cutoff)]
 
@@ -204,58 +79,6 @@ def console_report(d):
             continue
         weekly[wk] += n
     print("prompts by week: " + "  ".join(f"{k}:{v}" for k, v in sorted(weekly.items())))
-
-
-def health_report(h, lc):
-    print()
-    print("── harness health " + "─" * 44)
-    if h["latest"]:
-        sets = h["latest"].get("sets") or {}
-        per = "  ".join(f"{k} {v.get('pass',0)}/{v.get('total',0)}" for k, v in sets.items())
-        stale = f", {h['days_since_replay']}d ago" if h["days_since_replay"] is not None else ""
-        print(f"catch-rate: {per}   (model {h['latest'].get('model','?')}{stale})")
-        if h["latest"].get("dirty_calibration"):
-            print("  ! that run was against uncommitted calibration material — provisional")
-        if h["rubric_changed"]:
-            print("  ! the rubric changed since that run — re-run 'make replay' before trusting it")
-        if h["days_since_replay"] is not None and h["days_since_replay"] > 30:
-            print("  ! no replay in over a month; a grader without a fresh golden set is decorative")
-        if len(h["trend"]) > 1:
-            print("  trend: " + "  ".join(f"{d} {p}/{t}" for d, p, t in h["trend"]))
-    else:
-        print("catch-rate: never replayed — run 'make replay'")
-
-    n_esc = len(h["escapes"])
-    if n_esc:
-        print(f"escapes: {n_esc} total, {h['escapes_current_rubric']} against the current rubric")
-        for rule, cnt in h["escapes_by_rule"].most_common(5):
-            print(f"  {cnt}×  {rule}")
-    else:
-        print("escapes: 0 logged — either the rubric is holding, or /checkpoint is not logging them")
-
-    if h["grades"]:
-        print(f"grades stamped: {len(h['grades'])}   with-blockers-refused: {h['blocker_grades']}   "
-              f"caveats surfaced: {h['caveats']}")
-
-    if h["redundant"]:
-        print("dead-weight candidates (caught with NO rubric — the model already knows):")
-        for f in h["redundant"]:
-            print(f"  {f}")
-    if h["frontier_only"]:
-        print("frontier-only rules (the cheap tier misses them — not portable):")
-        for f in h["frontier_only"]:
-            print(f"  {f}")
-    if not h["redundant"] and not h["frontier_only"] and h["latest"]:
-        print("decay probes: not run — 'make replay-tiers' classifies each rule")
-
-    gps = lc["graduate_per_start"]
-    print(f"loop: start-work {lc['starts']}  checkpoint {lc['checkpoints']} "
-          f"({lc['checkpoint_per_session']}/session)  graduate {lc['graduates']}"
-          + (f" ({gps}/start)" if gps is not None else "") + f"  pushes {lc['pushes']}")
-    if lc["starts"] and lc["checkpoints"] == 0:
-        print("  ! work started, never checkpointed — failures are not reaching the rubric")
-    if lc["starts"] and lc["graduates"] == 0:
-        print("  ! nothing graduated — the WIP layer is accreting")
 
 
 def hbar_rows(counter, top=10):
@@ -389,11 +212,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, help="restrict to the last N days")
     ap.add_argument("--html", metavar="PATH", help="write a static HTML dashboard")
+    ap.add_argument("--no-health", action="store_true",
+                    help="activity only — skip the harness-health panel (`make health` prints it alone)")
     args = ap.parse_args()
 
     d = collect(args.days)
     console_report(d)
-    health_report(harness_health(args.days), loop_closure(d))
+    if not args.no_health and health_report is not None:
+        health_report(harness_health(args.days), loop_closure(args.days))
     if args.html:
         label = f"last {args.days} days" if args.days else "all time"
         out = Path(args.html)
